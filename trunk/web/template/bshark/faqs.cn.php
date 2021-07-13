@@ -20,6 +20,15 @@
   <div class="card-body">
     <h4>常见问答</h4>
   <div class="faqs-card">
+	  
+	      
+<p><font color=green>Q</font>:gets函数没有了吗?<br>
+   <font color=red>A</font>:gets函数因为不能限制输入的长度，造成了历史上大量的缓冲区溢出漏洞，因此在最新版本中被彻底删除了，请使用fgets这个函数取代。
+   或者使用下面的宏定义来取代：<br>
+   <pre>#define gets(S) fgets(S,sizeof(S),stdin)</pre><br>
+</p>	
+		</div><div class="faqs-card">      
+	  
     <p>Q:这个在线裁判系统使用什么样的编译器和编译选项?<br>
   A:系统运行于<a href="http://www.debian.org/">Debian</a>/<a href="http://www.ubuntu.com">Ubuntu</a>
 	Linux. 使用<a href="http://gcc.gnu.org/">GNU GCC/G++</a> 作为C/C++编译器,
@@ -50,26 +59,11 @@
   </tr>
 </table>
 <p>  编译器版本为（系统可能升级编译器版本，这里仅供参考）:<br>
-<table class="table table-hover">
-  <tr>
-    <td>gcc</td>
-    <td>gcc version 4.8.4 (Ubuntu 4.8.4-2ubuntu1~14.04.3)
-	  </td>
-  </tr>
-  <tr>
-    <td>glibc</td>
-    <td>glibc 2.19</td>
-  </tr>
-  <tr>
-    <td>FPC</td>
-    <td>Free Pascal Compiler version 2.6.2</td>
-  </tr>
-  <tr>
-    <td>openjdk</td>
-    <td>openjdk 1.7.0_151
-    </td>
-  </tr>
-</table>
+<font color=blue>Gcc version 9.3.0 (Ubuntu 9.3.0-17ubuntu1~20.04)</font><br>
+<font color=blue>Glibc 2.31-0ubuntu9.2</font><br>
+<font color=blue>Free Pascal Compiler version 3.0.4+dfsg-23 [2019/11/25] for x86_64</font><br>
+<font color=blue>Openjdk "14.0.2"</font><br>
+<font color=blue>Python 3.8.5</font><br>
 </p>
 </div><div class="faqs-card">
 <p>Q:程序怎样取得输入、进行输出?<br>

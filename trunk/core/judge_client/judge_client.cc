@@ -46,7 +46,9 @@
 //#include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <mysql/mysql.h>
+#ifdef OJ_USE_MYSQL
+	#include <mysql/mysql.h>
+#endif
 #include <assert.h>
 #include "okcalls.h"
 
@@ -171,6 +173,8 @@ static int total_time= 0;
 static int http_judge = 0;
 static int copy_data= 0;
 static char http_baseurl[BUFFER_SIZE/10];
+static char http_apipath[BUFFER_SIZE/10];
+static char http_loginpath[BUFFER_SIZE/10];
 static char http_username[BUFFER_SIZE/10];
 static char http_password[BUFFER_SIZE/10];
 static int http_download = 1;
@@ -185,6 +189,9 @@ static int turbo_mode = 0;
 static int python_free=0;
 static int use_docker=0;
 static const char *tbname = "solution";
+static char cc_opt[BUFFER_SIZE/10];
+static char cc_std[BUFFER_SIZE/10];
+static char cpp_std[BUFFER_SIZE/10];
 int num_of_test = 0;
 //static int sleep_tmp;
 
@@ -226,9 +233,9 @@ int already_running() {
 		if(DEBUG)printf("%s lock fail.\n",lock_file);
 		exit(1);
 	}
-	ftruncate(fd, 0);
+	if(ftruncate(fd, 0)) printf("close file fail 0 \n");
 	sprintf(buf, "%d", getpid());
-	write(fd, buf, strlen(buf) + 1);
+	if(write(fd, buf, strlen(buf) + 1) >= (unsigned int)strlen(buf)) printf("buffer size overflow!...\n");
 	return (0);
 }
 void print_arm_regs(long long unsigned int *d){
@@ -283,8 +290,8 @@ void write_log(const char *_fmt, ...)
 	FILE *fp = fopen(buffer, "ae+");
 	if (fp == NULL)
 	{
-		fprintf(stderr, "openfile error!\n");
-		system("pwd");
+		fprintf(stderr, "%s/log/client.log openfile error!\n",oj_home);
+		exit(-6);
 	}
 	va_start(ap, _fmt);
 	//l =
@@ -466,14 +473,14 @@ void read_double(char *buf, const char *key, double *value)
 {
 	char buf2[BUFFER_SIZE];
 	if (read_buf(buf, key, buf2))
-		sscanf(buf2, "%lf", value);
+		if(1!=sscanf(buf2, "%lf", value)) printf("double value read fail\n");
 }
 
 void read_int(char *buf, const char *key, int *value)
 {
 	char buf2[BUFFER_SIZE];
 	if (read_buf(buf, key, buf2))
-		sscanf(buf2, "%d", value);
+		if(1!=sscanf(buf2, "%d", value)) printf("int value read fail\n");
 }
 
 FILE *read_cmd_output(const char *fmt, ...)
@@ -493,7 +500,7 @@ FILE *read_cmd_output(const char *fmt, ...)
 	return ret;
 }
 // read the configue file
-void init_mysql_conf()
+void init_judge_conf()
 {
 	FILE *fp = NULL;
 	char buf[BUFFER_SIZE];
@@ -506,6 +513,16 @@ void init_mysql_conf()
 	sleep_time = 3;
 	strcpy(java_xms, "-Xms32m");
 	strcpy(java_xmx, "-Xmx256m");
+	strcpy(cc_std,"-std=c99");
+	strcpy(cc_opt,"-O2");
+	if(__GNUC__ > 9 || (  __GNUC__ == 9 &&  __GNUC_MINOR__ >= 3 ) ){ 
+		// ubuntu20.04 introduce g++9.3
+		strcpy(cc_std,"-std=c17");
+		strcpy(cpp_std,"-std=c++17");
+	}else{
+		strcpy(cc_std,"-std=c99");
+		strcpy(cpp_std,"-std=c++11");
+	}
 	sprintf(buf, "%s/etc/judge.conf", oj_home);
 	fp = fopen("./etc/judge.conf", "re");
 	if (fp != NULL)
@@ -524,6 +541,8 @@ void init_mysql_conf()
 			read_buf(buf, "OJ_JAVA_XMX", java_xmx);
 			read_int(buf, "OJ_HTTP_JUDGE", &http_judge);
 			read_buf(buf, "OJ_HTTP_BASEURL", http_baseurl);
+			read_buf(buf, "OJ_HTTP_APIPATH", http_apipath);
+			read_buf(buf, "OJ_HTTP_LOGINPATH", http_loginpath);
 			read_buf(buf, "OJ_HTTP_USERNAME", http_username);
 			read_buf(buf, "OJ_HTTP_PASSWORD", http_password);
 			read_int(buf, "OJ_HTTP_DOWNLOAD", &http_download);
@@ -533,12 +552,15 @@ void init_mysql_conf()
 			read_int(buf, "OJ_USE_MAX_TIME", &use_max_time);
 			read_int(buf, "OJ_TIME_LIMIT_TO_TOTAL", &time_limit_to_total);
 			read_int(buf, "OJ_USE_PTRACE", &use_ptrace);
-			//read_int(buf, "OJ_COMPILE_CHROOT", &compile_chroot);
+			read_int(buf, "OJ_COMPILE_CHROOT", &compile_chroot);
 			read_int(buf, "OJ_TURBO_MODE", &turbo_mode);
 			read_double(buf, "OJ_CPU_COMPENSATION", &cpu_compensation);
 			read_int(buf, "OJ_PYTHON_FREE", &python_free);
 			read_int(buf, "OJ_COPY_DATA", &copy_data);
 			read_int(buf, "OJ_USE_DOCKER",&use_docker);
+			read_buf(buf, "OJ_CC_STD", cc_std);
+			read_buf(buf, "OJ_CPP_STD", cpp_std);
+			read_buf(buf, "OJ_CC_OPT", cc_opt);
 			
 			
 		}
@@ -548,7 +570,7 @@ void init_mysql_conf()
 	
  	if(strcmp(http_username,"IP")==0){
                   FILE * fjobs = read_cmd_output("ifconfig|grep 'inet'|awk -F: '{printf $2}'|awk  '{printf $1}'");
-                  fscanf(fjobs, "%s", http_username);
+                  if(1!=fscanf(fjobs, "%s", http_username)) printf("IP read fail...\n");
                   pclose(fjobs);
         }
 	if(turbo_mode==2) tbname="solution2";
@@ -825,10 +847,10 @@ int compare(const char *file1, const char *file2, const char * infile)
 bool check_login()
 {
 	const char *cmd =
-		" wget --post-data=\"checklogin=1\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s/admin/problem_judge.php\"";
+		" wget --post-data=\"checklogin=1\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s%s\"";
 	int ret = 0;
-	FILE *fjobs = read_cmd_output(cmd, http_baseurl);
-	fscanf(fjobs, "%d", &ret);
+	FILE *fjobs = read_cmd_output(cmd, http_baseurl, http_apipath);
+	if(1!=fscanf(fjobs, "%d", &ret)) printf("http login fail..");
 	pclose(fjobs);
 
 	return ret;
@@ -838,9 +860,9 @@ void login()
 	if (!check_login())
 	{
 		const char *cmd =
-			"wget --post-data=\"user_id=%s&password=%s\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s/login.php\"";
+			"wget --post-data=\"user_id=%s&password=%s\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s%s\"";
 		FILE *fjobs = read_cmd_output(cmd, http_username, http_password,
-									  http_baseurl);
+									  http_baseurl, http_loginpath);
 		//fscanf(fjobs,"%d",&ret);
 		pclose(fjobs);
 	}
@@ -885,9 +907,9 @@ void _update_solution_http(int solution_id, int result, int time, int memory,
 						   int sim, int sim_s_id, double pass_rate)
 {
 	const char *cmd =
-		" wget --post-data=\"update_solution=1&sid=%d&result=%d&time=%d&memory=%d&sim=%d&simid=%d&pass_rate=%f\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s/admin/problem_judge.php\"";
+		" wget --post-data=\"update_solution=1&sid=%d&result=%d&time=%d&memory=%d&sim=%d&simid=%d&pass_rate=%f\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s%s\"";
 	FILE *fjobs = read_cmd_output(cmd, solution_id, result, time, memory, sim,
-								  sim_s_id, pass_rate, http_baseurl);
+								  sim_s_id, pass_rate, http_baseurl, http_apipath);
 	//fscanf(fjobs,"%d",&ret);
 	pclose(fjobs);
 }
@@ -1002,8 +1024,8 @@ void _addceinfo_http(int solution_id)
 	free(ceinfo_encode);
 
 	const char *cmd =
-		" wget --post-file=\"ce.post\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s/admin/problem_judge.php\"";
-	FILE *fjobs = read_cmd_output(cmd, http_baseurl);
+		" wget --post-file=\"ce.post\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s%s\"";
+	FILE *fjobs = read_cmd_output(cmd, http_baseurl, http_apipath);
 	//fscanf(fjobs,"%d",&ret);
 	pclose(fjobs);
 }
@@ -1080,8 +1102,8 @@ void _addreinfo_http(int solution_id, const char *filename)
 	free(reinfo_encode);
 
 	const char *cmd =
-		" wget --post-file=\"re.post\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s/admin/problem_judge.php\"";
-	FILE *fjobs = read_cmd_output(cmd, http_baseurl);
+		" wget --post-file=\"re.post\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s%s\"";
+	FILE *fjobs = read_cmd_output(cmd, http_baseurl, http_apipath);
 	//fscanf(fjobs,"%d",&ret);
 	pclose(fjobs);
 }
@@ -1148,8 +1170,8 @@ void _update_user_http(char *user_id)
 {
 
 	const char *cmd =
-		" wget --post-data=\"updateuser=1&user_id=%s\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s/admin/problem_judge.php\"";
-	FILE *fjobs = read_cmd_output(cmd, user_id, http_baseurl);
+		" wget --post-data=\"updateuser=1&user_id=%s\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s%s\"";
+	FILE *fjobs = read_cmd_output(cmd, user_id, http_baseurl, http_apipath);
 	//fscanf(fjobs,"%d",&ret);
 	pclose(fjobs);
 }
@@ -1170,8 +1192,8 @@ void update_user(char *user_id)
 
 void _update_problem_http(int pid,int cid) {
 	const char * cmd =
-			" wget --post-data=\"updateproblem=1&pid=%d\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s/admin/problem_judge.php\"";
-	FILE * fjobs = read_cmd_output(cmd, pid, http_baseurl);
+			" wget --post-data=\"updateproblem=1&pid=%d\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s%s\"";
+	FILE * fjobs = read_cmd_output(cmd, pid, http_baseurl, http_apipath);
 	//fscanf(fjobs,"%d",&ret);
 	pclose(fjobs);
 }
@@ -1223,14 +1245,13 @@ void update_problem(int pid,int cid) {
 }
 void umount(char *work_dir)
 {
-	chdir(work_dir);
+	if(chdir(work_dir)) exit(-1);
 	execute_cmd("/bin/umount -l %s/usr 2>/dev/null", work_dir);
 	if(strlen(work_dir)>0){
 		execute_cmd("/bin/umount -l %s/proc 2>/dev/null", work_dir);
 	}
 	execute_cmd("/bin/umount -l %s/dev 2>/dev/null", work_dir);
 	execute_cmd("/bin/umount -l %s/usr 2>/dev/null", work_dir);
-	chdir(work_dir);
 	execute_cmd("/bin/umount -l usr dev");
 	execute_cmd("/bin/rmdir %s/* ", work_dir);
 	execute_cmd("/bin/rmdir %s/log/* ", work_dir);
@@ -1240,10 +1261,10 @@ int compile(int lang, char *work_dir)
 	if( lang == 6 || lang == 16 ) return 0; // python / js don't compile
 	int pid;
 
-	const char *CP_C[] = {"gcc", "Main.c", "-o", "Main", "-O2", "-fmax-errors=10", "-Wall",
-						  "-lm", "--static", "-std=c99", "-DONLINE_JUDGE", NULL};
-	const char *CP_X[] = {"g++", "-fno-asm", "-fmax-errors=10", "-Wall",
-						  "-lm", "--static", "-std=c++11", "-DONLINE_JUDGE", "-o", "Main", "Main.cc", NULL};
+	const char *CP_C[] = {"gcc", "Main.c", "-o", "Main", cc_opt, "-fmax-errors=10", "-Wall",
+						  "-lm", "--static", cc_std , "-DONLINE_JUDGE", NULL};
+	const char *CP_X[] = {"g++", "-fno-asm", "-fmax-errors=10", "-Wall",cc_opt,
+						  "-lm", "--static", cpp_std, "-DONLINE_JUDGE", "-o", "Main", "Main.cc", NULL};
 	const char *CP_P[] =
 		{"fpc", "Main.pas", "-Cs32000000", "-Sh", "-O2", "-Co", "-Ct", "-Ci", NULL};
 	//      const char * CP_J[] = { "javac", "-J-Xms32m", "-J-Xmx256m","-encoding","UTF-8", "Main.java",NULL };
@@ -1333,19 +1354,19 @@ int compile(int lang, char *work_dir)
 			setrlimit(RLIMIT_AS, &LIM);
 		if (lang != 2 && lang != 11)
 		{
-			freopen("ce.txt", "w", stderr);
+			stderr=freopen("ce.txt", "w", stderr);
 			//freopen("/dev/null", "w", stdout);
 		}
 		else
 		{
-			freopen("ce.txt", "w", stdout);
+			stdout=freopen("ce.txt", "w", stdout);
 		}
 		execute_cmd("/bin/chown judge %s ", work_dir);
 		execute_cmd("/bin/chmod 750 %s ", work_dir);
 
 		if (compile_chroot && lang != 3 && lang != 9 && lang != 6 && lang != 11 && lang != 5 )
 		{
-			 if (access("usr", 0) == -1){
+			 if (access("usr", F_OK ) == -1){
 				execute_cmd("mkdir -p root/.cache/go-build usr etc/alternatives proc tmp dev");
 				execute_cmd("chown judge -R root tmp ");
 				execute_cmd("mount -o bind /usr usr");
@@ -1367,7 +1388,7 @@ int compile(int lang, char *work_dir)
 				}
 				//execute_cmd("mount -o remount,ro proc");
 			}
-				chroot(work_dir);
+			if(chroot(work_dir)) printf("warning chroot fail!\n");
 		}
 		while (setgid(1536) != 0)
 			sleep(1);
@@ -1483,7 +1504,7 @@ int get_proc_status(int pid, const char *mark)
 		buf[strlen(buf) - 1] = 0;
 		if (strncmp(buf, mark, m) == 0)
 		{
-			sscanf(buf + m + 1, "%d", &ret);
+			if(1!=sscanf(buf + m + 1, "%d", &ret)) printf("proc read fail\n");
 		}
 	}
 	if (pf)
@@ -1558,8 +1579,8 @@ void _get_solution_http(int solution_id, char *work_dir, int lang)
 	//login();
 
 	const char *cmd2 =
-		"wget --post-data=\"getsolution=1&sid=%d\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O %s \"%s/admin/problem_judge.php\"";
-	FILE *pout = read_cmd_output(cmd2, solution_id, src_pth, http_baseurl);
+		"wget --post-data=\"getsolution=1&sid=%d\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O %s \"%s%s\"";
+	FILE *pout = read_cmd_output(cmd2, solution_id, src_pth, http_baseurl, http_apipath);
 
 	pclose(pout);
 }
@@ -1624,8 +1645,8 @@ void _get_custominput_http(int solution_id, char *work_dir)
 	//login();
 
 	const char *cmd2 =
-		"wget --post-data=\"getcustominput=1&sid=%d\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O %s \"%s/admin/problem_judge.php\"";
-	FILE *pout = read_cmd_output(cmd2, solution_id, src_pth, http_baseurl);
+		"wget --post-data=\"getcustominput=1&sid=%d\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O %s \"%s%s\"";
+	FILE *pout = read_cmd_output(cmd2, solution_id, src_pth, http_baseurl, http_apipath);
 
 	pclose(pout);
 }
@@ -1692,12 +1713,12 @@ void _get_solution_info_http(int solution_id, int & p_id, char * user_id,
 	login();
 
 	const char *cmd =
-		"wget --post-data=\"getsolutioninfo=1&sid=%d\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s/admin/problem_judge.php\"";
-	FILE *pout = read_cmd_output(cmd, solution_id, http_baseurl);
-	fscanf(pout, "%d", &p_id);
-	fscanf(pout, "%s", user_id);
-	fscanf(pout, "%d", &lang);
-	fscanf(pout, "%d", &cid);
+		"wget --post-data=\"getsolutioninfo=1&sid=%d\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s%s\"";
+	FILE *pout = read_cmd_output(cmd, solution_id, http_baseurl, http_apipath);
+	if(1!=fscanf(pout, "%d", &p_id))  printf("http problem_id read fail...\n");
+	if(1!=fscanf(pout, "%s", user_id)) printf("http user_id read fail ... \n") ;
+	if(1!=fscanf(pout, "%d", &lang))   printf("http language read fail ... \n") ;
+	if(1!=fscanf(pout, "%d", &cid))    printf("http contest_id read fail ... \n") ;
 	pclose(pout);
 }
 void get_solution_info(int solution_id, int & p_id, char * user_id,
@@ -1742,11 +1763,11 @@ void _get_problem_info_http(int p_id, double &time_lmt, int &mem_lmt,
 	//login();
 
 	const char *cmd =
-		"wget --post-data=\"getprobleminfo=1&pid=%d\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s/admin/problem_judge.php\"";
-	FILE *pout = read_cmd_output(cmd, p_id, http_baseurl);
-	fscanf(pout, "%lf", &time_lmt);
-	fscanf(pout, "%d", &mem_lmt);
-	fscanf(pout, "%d", &isspj);
+		"wget --post-data=\"getprobleminfo=1&pid=%d\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s%s\"";
+	FILE *pout = read_cmd_output(cmd, p_id, http_baseurl, http_apipath);
+	if(1!=fscanf(pout, "%lf", &time_lmt)) printf("http read time_limit fail...\n");
+	if(1!=fscanf(pout, "%d", &mem_lmt)  ) printf("http read memory_limit fail...\n");
+	if(1!=fscanf(pout, "%d", &isspj)    ) printf("http read special judge fail...\n");
 	pclose(pout);
 	if(DEBUG) printf("time_lmt:%g\n",time_lmt);
 }
@@ -2262,21 +2283,21 @@ void run_solution(int &lang, char *work_dir, double &time_lmt, int &usedtime,
 			     (char * const )"LANG=zh_CN.UTF-8",
 			     (char * const )"LANGUAGE=zh_CN.UTF-8",
 			     (char * const )"LC_ALL=zh_CN.utf-8",NULL};
-	nice(19);
+	if(nice(19)) printf("renice fail... \n");
 	// now the user is "judger"
-	chdir(work_dir);
+	if(chdir(work_dir)) exit(-4);
 	// open the files
 	if(lang==18){ 
 		execute_cmd("/usr/bin/sqlite3 %s/data.db < %s", work_dir,data_file_path);
 		execute_cmd("/bin/chown judge %s/data.db", work_dir);
-		freopen("Main.sql", "r", stdin);
+		stdin=freopen("Main.sql", "r", stdin);
 	}else{
 		if(copy_data)
 
-			freopen("data.in", "r", stdin);
+			stdin=freopen("data.in", "r", stdin);
 		else{
 			printf("infile: [%s]\n",data_file_path);
-			freopen(data_file_path,"r",stdin);
+			stdin=freopen(data_file_path,"r",stdin);
 		}
 	}
 	execute_cmd("touch %s/user.out", work_dir);
@@ -2286,8 +2307,8 @@ void run_solution(int &lang, char *work_dir, double &time_lmt, int &usedtime,
 		execute_cmd("chmod 740 %s/data.in", work_dir);
 	}
 	execute_cmd("chmod 760 %s/user.out", work_dir);
-	freopen("user.out", "w", stdout);
-	freopen("error.out", "a+", stderr);
+	stdout=freopen("user.out", "w", stdout);
+	stderr=freopen("error.out", "a+", stderr);
 	// trace me
 	ptrace(PTRACE_TRACEME, 0, NULL, NULL);
 	// run me
@@ -2295,7 +2316,7 @@ void run_solution(int &lang, char *work_dir, double &time_lmt, int &usedtime,
 		(!use_docker) && lang != 3 && lang != 5 && lang != 20 && lang != 9 && !(lang ==6 && python_free )
 	   ){
 		if(DEBUG)printf("Chrooting...\n");
-		chroot(work_dir);
+		if(chroot(work_dir)) printf("danger .....................chroot fail....................line 2298 \n");
 	}else{
 		if(DEBUG)printf("Skiping chroot...\n");
 	
@@ -2497,6 +2518,8 @@ int special_judge(char *oj_home, int problem_id, char *infile, char *outfile,
 {
 
 	pid_t pid;
+	char spjpath[BUFFER_SIZE/2];
+	char tpjpath[BUFFER_SIZE/2];
 	if (DEBUG) printf("pid=%d\n", problem_id);
 	// prevent privileges settings caused spj fail in [issues686]
 	execute_cmd("chown www-data:judge %s/data/%d/spj %s %s %s", oj_home, problem_id,infile, outfile, userfile);
@@ -2526,11 +2549,19 @@ int special_judge(char *oj_home, int problem_id, char *infile, char *outfile,
 		LIM.rlim_max = STD_F_LIM + STD_MB;
 		LIM.rlim_cur = STD_F_LIM;
 		setrlimit(RLIMIT_FSIZE, &LIM);
+		sprintf(spjpath,"%s/data/%d/spj", oj_home, problem_id);
+		sprintf(tpjpath,"%s/data/%d/tpj", oj_home, problem_id);
 
-		ret = execute_cmd("%s/data/%d/spj %s %s %s", oj_home, problem_id,
-						  infile, outfile, userfile);
-		if (DEBUG)
-			printf("spj1=%d\n", ret);
+		if( access( tpjpath , X_OK ) == 0 ){
+			ret = execute_cmd("%s/data/%d/tpj %s %s %s 2>> diff.out ", oj_home, problem_id, infile, userfile, outfile);    // testlib style
+			if (DEBUG) printf("testlib spj return: %d\n", ret);
+		}else if (access( spjpath , X_OK ) == 0 ) {	
+			ret = execute_cmd("%s/data/%d/spj %s %s %s", oj_home, problem_id, infile, outfile, userfile);    // hustoj style
+			if (DEBUG) printf("hustoj spj return: %d\n", ret);
+		}else{
+			printf("spj tpj not found problem: %d\n", problem_id);		
+			ret=1;
+		}
 		if (ret)
 			exit(1);
 		else
@@ -2543,7 +2574,7 @@ int special_judge(char *oj_home, int problem_id, char *infile, char *outfile,
 		waitpid(pid, &status, 0);
 		ret = WEXITSTATUS(status);
 		if (DEBUG)
-			printf("spj2=%d\n", ret);
+			printf("recorded spj: %d\n", ret);
 	}
 	return ret;
 }
@@ -2554,7 +2585,7 @@ void judge_solution(int &ACflg, int &usedtime, double time_lmt, int isspj,
 {
 	//usedtime-=1000;
 	int comp_res;
-	if (!oi_mode)
+	if (num_of_test == 0 )
 		num_of_test = 1.0;
 	
 	if (ACflg == OJ_AC){
@@ -2931,7 +2962,7 @@ void init_parameters(int argc, char **argv, int &solution_id,
 	else
 		strcpy(oj_home, "/home/judge");
 
-	chdir(oj_home); // change the dir// init our work
+	if(chdir(oj_home)) exit(-2); // change the dir// init our work
 
 	solution_id = atoi(argv[1]);
 	runner_id = atoi(argv[2]);
@@ -2966,7 +2997,7 @@ int get_sim(int solution_id, int lang, int pid, int &sim_s_id)
 		pf = fopen("sim", "r");
 		if (pf)
 		{
-			fscanf(pf, "%d%d", &sim, &sim_s_id);
+			if(2==fscanf(pf, "%d%d", &sim, &sim_s_id));
 			fclose(pf);
 		}
 	}
@@ -2991,7 +3022,7 @@ int count_in_files(char *dirpath)
 	const char *cmd = "ls -l %s/*.in|wc -l";
 	int ret = 0;
 	FILE *fjobs = read_cmd_output(cmd, dirpath);
-	fscanf(fjobs, "%d", &ret);
+	if(1!=fscanf(fjobs, "%d", &ret)) printf("warning count files fail");;
 	pclose(fjobs);
 
 	return ret;
@@ -2999,20 +3030,20 @@ int count_in_files(char *dirpath)
 
 int get_test_file(char *work_dir, int p_id)
 {
-	char filename[BUFFER_SIZE/10];
+	char filename[BUFFER_SIZE/2];
 	char localfile[BUFFER_SIZE];
 	time_t remote_date, local_date;
 	int ret = 0;
 	const char *cmd =
-		" wget --post-data=\"gettestdatalist=1&time=1&pid=%d\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s/admin/problem_judge.php\"";
-	FILE *fjobs = read_cmd_output(cmd, p_id, http_baseurl);
-	while (fgets(filename, BUFFER_SIZE - 1, fjobs) != NULL)
+		" wget --post-data=\"gettestdatalist=1&time=1&pid=%d\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O - \"%s%s\"";
+	FILE *fjobs = read_cmd_output(cmd, p_id, http_baseurl, http_apipath);
+	while (fgets(filename, sizeof(filename) - 1, fjobs) != NULL)
 	{
 
-		sscanf(filename, "%ld", &remote_date);
-		if (fgets(filename, BUFFER_SIZE - 1, fjobs) == NULL)
+		if(1!=sscanf(filename, "%ld", &remote_date)) printf("http remote time stamp read fail\n");
+		if (fgets(filename, sizeof(filename) - 1, fjobs) == NULL)
 			break;
-		sscanf(filename, "%s", filename);
+		if(1!=sscanf(filename, "%s", filename)) printf("http filename read fail\n");
 		if (http_judge && (!data_list_has(filename)))
 			data_list_add(filename);
 		sprintf(localfile, "%s/data/%d/%s", oj_home, p_id, filename);
@@ -3023,21 +3054,21 @@ int get_test_file(char *work_dir, int p_id)
 		stat(localfile, &fst);
 		local_date = fst.st_mtime;
 
-		if (access(localfile, 0) == -1 || local_date < remote_date)
+		if (access(localfile, F_OK ) == -1 || local_date < remote_date)
 		{
 
 			if (strcmp(filename, "spj") == 0)
 				continue;
 			execute_cmd("/bin/mkdir -p %s/data/%d", oj_home, p_id);
 			const char *cmd2 =
-				" wget --post-data=\"gettestdata=1&filename=%d/%s\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O \"%s\"  \"%s/admin/problem_judge.php\"";
-			execute_cmd(cmd2, p_id, filename, localfile, http_baseurl);
+				" wget --post-data=\"gettestdata=1&filename=%d/%s\" --load-cookies=cookie --save-cookies=cookie --keep-session-cookies -q -O \"%s\"  \"%s%s\"";
+			execute_cmd(cmd2, p_id, filename, localfile, http_baseurl, http_apipath);
 			ret++;
 
 			if (strcmp(filename, "spj.c") == 0)
 			{
 				//   sprintf(localfile,"%s/data/%d/spj.c",oj_home,p_id);
-				if (access(localfile, 0) == 0)
+				if (access(localfile, F_OK ) == 0)
 				{
 					const char *cmd3 = "gcc -o %s/data/%d/spj %s/data/%d/spj.c";
 					execute_cmd(cmd3, oj_home, p_id, oj_home, p_id);
@@ -3046,7 +3077,7 @@ int get_test_file(char *work_dir, int p_id)
 			if (strcmp(filename, "spj.cc") == 0)
 			{
 				//     sprintf(localfile,"%s/data/%d/spj.cc",oj_home,p_id);
-				if (access(localfile, 0) == 0)
+				if (access(localfile, F_OK ) == 0)
 				{
 					const char *cmd4 =
 						"g++ -o %s/data/%d/spj %s/data/%d/spj.cc";
@@ -3107,7 +3138,7 @@ int main(int argc, char **argv)
 
 	init_parameters(argc, argv, solution_id, runner_id);
 
-	init_mysql_conf();
+	init_judge_conf();
 
 #ifdef _mysql_h
 	if (!http_judge && !init_mysql_conn())
@@ -3134,10 +3165,10 @@ int main(int argc, char **argv)
 	
 	clean_workdir(work_dir);
 	
-	chdir(work_dir);
+	if(chdir(work_dir)) exit(-3);
 
 	if (http_judge)
-		system("/bin/ln -s ../cookie ./");
+		if(!system("/bin/ln -s ../cookie ./")) printf("cookie link fail \n");
 	get_solution_info(solution_id, p_id, user_id, lang,cid);
 	//get the limit
 
@@ -3242,20 +3273,7 @@ int main(int argc, char **argv)
 		}
 		
 	}
-/*
-	if (p_id > 0 && (dp = opendir(fullpath)) == NULL)
-	{
 
-		write_log("No such dir:%s!\n", fullpath);
-#ifdef _mysql_h
-		if (!http_judge)
-			mysql_close(conn);
-#endif
-		exit(-1);
-	}
-	
-	
-*/
 
 	int ACflg, PEflg;
 	ACflg = PEflg = OJ_AC;
@@ -3327,18 +3345,14 @@ int main(int argc, char **argv)
 		clean_workdir(work_dir);
 		exit(0);
 	}
-/*	
-	for (;(dirp = readdir(dp)) != NULL;)
-	{
 
-		int namelen = isInFile(dirp->d_name); // check if the file is *.in or not
-		if (namelen == 0)
-			continue;
-		num_of_test++;
-	}
-	rewinddir(dp);
-*/	
 	num_of_test=namelist_len;
+	// report Runtime Error , if no test file is found.
+        if( num_of_test == 0 ){
+                print_runtimeerror((char *)"no test data ",(char *)" no *.in file found");
+                ACflg = OJ_RE;
+                finalACflg = OJ_RE;
+        }
 
 	for (int i=0 ; (oi_mode || ACflg == OJ_AC || ACflg == OJ_PE) && i < namelist_len ;i++)
 	{
@@ -3354,7 +3368,7 @@ int main(int argc, char **argv)
 
 		prepare_files(dirp->d_name, namelen, infile, p_id, work_dir, outfile,
 					  userfile, runner_id);
-		if (access(outfile, 0) == -1)
+		if (access(outfile, R_OK ) == -1)
 		{
 			//out file does not exist
 			char error[BUFFER_SIZE];

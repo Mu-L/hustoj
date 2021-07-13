@@ -29,6 +29,15 @@
 <center>
   <font size="+3"><?php echo $OJ_NAME?> Online Judge FAQ</font>
 </center>
+	      
+	      <hr>
+	      
+<p><font color=green>Q</font>:gets函数没有了吗?<br>
+   <font color=red>A</font>:gets函数因为不能限制输入的长度，造成了历史上大量的缓冲区溢出漏洞，因此在最新版本中被彻底删除了，请使用fgets这个函数取代。
+   或者使用下面的宏定义来取代：<br>
+   <pre>#define gets(S) fgets(S,sizeof(S),stdin)</pre><br>
+</p>	      
+	      
 <hr>
 <p><font color=green>Q</font>:这个在线裁判系统使用什么样的编译器和编译选项?<br>
   <font color=red>A</font>:系统运行于<a href="http://www.debian.org/">Debian</a>/<a href="http://www.ubuntu.com">Ubuntu</a>
@@ -60,11 +69,14 @@
   </tr>
 </table>
 <p>  编译器版本为（系统可能升级编译器版本，这里仅供参考）:<br>
-  <font color=blue>gcc version 4.8.4 (Ubuntu 4.8.4-2ubuntu1~14.04.3)</font><br>
-  <font color=blue>glibc 2.19</font><br>
-<font color=blue>Free Pascal Compiler version 2.6.2<br>
-openjdk 1.7.0_151<br>
-</font></p>
+	
+<font color=blue>Gcc version 9.3.0 (Ubuntu 9.3.0-17ubuntu1~20.04)</font><br>
+<font color=blue>Glibc 2.31-0ubuntu9.2</font><br>
+<font color=blue>Free Pascal Compiler version 3.0.4+dfsg-23 [2019/11/25] for x86_64</font><br>
+<font color=blue>Openjdk "14.0.2"</font><br>
+<font color=blue>Python 3.8.5</font><br>
+	      </p>
+	      
 <hr>
 <p><font color=green>Q</font>:程序怎样取得输入、进行输出?<br>
   <font color=red>A</font>:你的程序应该从标准输入 stdin('Standard Input')获取输入，并将结果输出到标准输出 stdout('Standard Output').例如,在C语言可以使用 'scanf' ，在C++可以使用'cin' 进行输入；在C使用 'printf' ，在C++使用'cout'进行输出.</p>
